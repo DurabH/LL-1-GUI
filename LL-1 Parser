@@ -1,0 +1,393 @@
+
+import tkinter as tk
+from tkinter import scrolledtext, messagebox
+
+
+def generateUniquePrime(existing_keys, base_key):
+    #Generate a unique prime notation key
+    prime_key = base_key + "'"
+    counter = 1
+    while prime_key in existing_keys:
+        prime_key = f"{base_key}_{counter}'"
+        counter += 1
+    return prime_key
+
+
+def removeLeftRecursion(rulesDiction):
+    store = {}
+    processed_keys = set(rulesDiction.keys())
+
+    for lhs in list(rulesDiction.keys()):
+        alphaRules = []
+        betaRules = []
+        allrhs = rulesDiction[lhs]
+
+        for subrhs in allrhs:
+            if subrhs[0] == lhs:
+                alphaRules.append(subrhs[1:])
+            else:
+                betaRules.append(subrhs)
+
+        if len(alphaRules) != 0:
+            lhs_ = generateUniquePrime(processed_keys, lhs)
+            processed_keys.add(lhs_)
+
+            for b in range(len(betaRules)):
+                betaRules[b].append(lhs_)
+
+            rulesDiction[lhs] = betaRules
+
+            for a in range(len(alphaRules)):
+                alphaRules[a].append(lhs_)
+            alphaRules.append(['#'])
+            store[lhs_] = alphaRules
+
+    for left in store:
+        rulesDiction[left] = store[left]
+
+    return rulesDiction
+
+
+def LeftFactoring(rulesDiction):
+    newDict = {}
+    processed_keys = set(rulesDiction.keys())
+
+    for lhs in rulesDiction:
+        allrhs = rulesDiction[lhs]
+        temp = {}
+
+        for subrhs in allrhs:
+            if subrhs[0] not in temp:
+                temp[subrhs[0]] = [subrhs]
+            else:
+                temp[subrhs[0]].append(subrhs)
+
+        new_rule = []
+        tempo_dict = {}
+
+        for term_key in temp:
+            allStartingWithTermKey = temp[term_key]
+
+            if len(allStartingWithTermKey) > 1:
+                lhs_ = generateUniquePrime(processed_keys.union(set(tempo_dict.keys())), lhs)
+                processed_keys.add(lhs_)
+
+                new_rule.append([term_key, lhs_])
+
+                ex_rules = []
+                for g in temp[term_key]:
+                    ex_rules.append(g[1:])
+                tempo_dict[lhs_] = ex_rules
+            else:
+                new_rule.append(allStartingWithTermKey[0])
+
+        newDict[lhs] = new_rule
+        for key in tempo_dict:
+            newDict[key] = tempo_dict[key]
+
+    return newDict
+
+
+def first(rule, diction, term_userdef):
+    #Computes First Set for a given rule
+    if len(rule) == 0:
+        return []
+
+    if rule[0] in term_userdef:
+        return [rule[0]]
+
+    if rule[0] == '#':
+        return ['#']
+
+    if rule[0] in diction:
+        fres = []
+        for subrule in diction[rule[0]]:
+            indiv_res = first(subrule, diction, term_userdef)
+            fres.extend(indiv_res)
+        return list(set(fres))
+
+    return []
+
+
+def follow(nt, start_symbol, diction, term_userdef, firsts, follows, visited=None):
+    #Computes Follow Set for a given non-terminal.
+    if visited is None:
+        visited = set()
+
+    if nt in visited:
+        return follows[nt]
+
+    visited.add(nt)
+
+    # Initialize Follow Set
+    if nt not in follows:
+        follows[nt] = set()
+
+    if nt == start_symbol:
+        follows[nt].add('$')
+
+    # Iterate through all productions to apply rules for Follow Set
+    for curNT, productions in diction.items():
+        for production in productions:
+            for i in range(len(production)):
+                if production[i] == nt:
+                    # Rule: If there's a beta after A, add First(beta) to Follow(A)
+                    if i + 1 < len(production):
+                        beta = production[i + 1:]
+                        first_of_beta = first(beta, diction, term_userdef)
+
+                        if '#' in first_of_beta:
+                            first_of_beta.remove('#')
+                            follows[nt].update(first_of_beta)
+                            follows[nt].update(follow(curNT, start_symbol, diction, term_userdef, firsts, follows, visited))
+                        else:
+                            follows[nt].update(first_of_beta)
+
+                
+                    if i + 1 == len(production) or '#' in first(beta, diction, term_userdef):
+                        if curNT != nt:  # Avoid self-references
+                            follows[nt].update(follow(curNT, start_symbol, diction, term_userdef, firsts, follows, visited))
+
+    return follows[nt]
+
+
+
+def createParseTable(diction, term_userdef, firsts, follows, start_symbol):
+    ntlist = list(diction.keys())
+    terminals = term_userdef + ['$']
+    mat = [['' for _ in terminals] for _ in ntlist]
+    grammar_is_LL = True
+
+    for lhs in diction:
+        for subrule in diction[lhs]:
+            res = first(subrule, diction, term_userdef)
+
+            if '#' in res:
+                res.remove('#')
+                res.extend(follows[lhs])
+
+            for terminal in res:
+                x = ntlist.index(lhs)
+                y = terminals.index(terminal)
+                if mat[x][y] == '':
+                    mat[x][y] = f"{lhs} -> {' '.join(subrule)}"
+                else:
+                    grammar_is_LL = False
+
+    return mat, grammar_is_LL, terminals
+
+
+class LLParserGUI:
+    def __init__(self, master):
+        self.master = master
+        master.title("LL(1) Parser")
+        master.geometry("800x800")
+
+    
+        grammar_frame = tk.Frame(master)
+        grammar_frame.pack(padx=10, pady=10, fill=tk.X)
+
+        tk.Label(grammar_frame, text="Input Grammar (NT -> Rule | Rule OR Line-by-Line):").pack(anchor=tk.W)
+        self.grammar_text = scrolledtext.ScrolledText(grammar_frame, wrap=tk.WORD, height=10)
+        self.grammar_text.pack(fill=tk.BOTH, padx=5, pady=5)
+
+        
+        input_frame = tk.Frame(master)
+        input_frame.pack(padx=10, pady=10, fill=tk.X)
+
+        tk.Label(input_frame, text="Input String:").pack(side=tk.LEFT)
+        self.input_entry = tk.Entry(input_frame, width=50)
+        self.input_entry.pack(side=tk.LEFT, padx=10)
+        
+
+        
+        parse_btn = tk.Button(input_frame, text="Parse", command=self.run_parser)
+        parse_btn.pack(side=tk.LEFT, padx=10)
+
+    
+        self.output_text = scrolledtext.ScrolledText(master, wrap=tk.WORD, width=100, height=30)
+        self.output_text.pack(padx=10, pady=10, expand=True, fill=tk.BOTH)
+
+    def parse_grammar(self):
+        grammar_input = self.grammar_text.get("1.0", tk.END).strip()
+        if not grammar_input:
+            messagebox.showerror("Error", "Please enter a grammar.")
+            return False
+
+        self.diction = {}
+        multiline_rules = {}
+        for rule in grammar_input.splitlines():
+            if "->" not in rule:
+                messagebox.showerror("Error", f"Invalid grammar rule: {rule}")
+                return False
+
+            lhs, rhs = map(str.strip, rule.split("->"))
+            if lhs not in multiline_rules:
+                multiline_rules[lhs] = []
+            multiline_rules[lhs].append(rhs)
+
+        for lhs, rhs_list in multiline_rules.items():
+            rhs_consolidated = " | ".join(rhs_list)
+            self.diction[lhs] = [list(map(str.strip, prod.split())) for prod in rhs_consolidated.split("|")]
+
+        self.start_symbol = list(self.diction.keys())[0]
+        return True
+
+    def compute_initial_data(self):
+        if not self.parse_grammar():
+            return None
+
+        term_userdef = set()
+        for rhs in self.diction.values():
+            for prod in rhs:
+                term_userdef.update([sym for sym in prod if sym not in self.diction])
+
+        term_userdef = list(term_userdef - {'#'})
+
+        self.diction = removeLeftRecursion(self.diction)
+        self.diction = LeftFactoring(self.diction)
+
+        firsts = {nt: set() for nt in self.diction}
+        follows = {nt: set() for nt in self.diction}
+
+        for nt in self.diction:
+            for prod in self.diction[nt]:
+                firsts[nt].update(first(prod, self.diction, term_userdef))
+
+        for nt in self.diction:
+            follow(nt, self.start_symbol, self.diction, term_userdef, firsts, follows)
+
+        self.firsts = {nt: sorted(list(fset)) for nt, fset in firsts.items()}
+        self.follows = {nt: sorted(list(fset)) for nt, fset in follows.items()}
+
+        self.parse_table, self.result, self.terminals = createParseTable(
+            self.diction, term_userdef, self.firsts, self.follows, self.start_symbol
+        )
+
+        self.ntlist = list(self.diction.keys())
+        self.term_userdef = term_userdef
+        return term_userdef
+
+    def stack_based_parsing(self, input_string):
+        
+        term_userdef = self.compute_initial_data()
+        if term_userdef is None:
+            return False, [], [], []
+
+        # Add '$' to input string
+        input_tokens = input_string.split() + ['$']
+        
+        stack = ['$', self.start_symbol]
+        buffer = input_tokens.copy()
+        action = []
+        
+        parsing_steps = []
+
+        while stack and buffer:
+            top = stack[-1]
+            current_token = buffer[0]
+
+            parsing_steps.append(f"Stack: {stack}, Buffer: {buffer}, Action: {action}")
+
+            # If top is a terminal
+            if top in term_userdef + ['$']:
+                if top == current_token:
+                    stack.pop()
+                    buffer.pop(0)
+                    action.append(f"Match {top}")
+
+                    # If end of parsing reached
+                    if top == '$':
+                        parsing_steps.append("Parsing successful!")
+                        break
+                else:
+                    parsing_steps.append(f"Error: Unexpected token {current_token}")
+                    return False, parsing_steps, buffer, action
+
+            # If top is a non-terminal
+            elif top in self.ntlist:
+
+                # Find the appropriate production in parse table
+                try:
+                    x = self.ntlist.index(top)
+                    y = self.terminals.index(current_token)
+                    
+                    production = self.parse_table[x][y]
+                    
+                    if not production:
+                        parsing_steps.append(f"Error: No production for {top} with token {current_token}")
+                        return False, parsing_steps, buffer, action
+
+                    # Pop the non-terminal and push its production
+                    stack.pop()
+                    
+                    rhs = production.split('->')[1].strip().split()
+                    
+                    # Push RHS in reverse order (except epsilon)
+                    if rhs != ['#']:
+                        stack.extend(reversed(rhs))
+                    
+                    action.append(f"Produce {production}")
+
+                except ValueError:
+                    parsing_steps.append(f"Error: Unexpected symbol {top}")
+                    return False, parsing_steps, buffer, action
+
+            else:
+                parsing_steps.append(f"Error: Unexpected symbol {top}")
+                return False, parsing_steps, buffer, action
+
+        return True, parsing_steps, buffer, action
+
+    def display_output(self, parsing_result=None, parsing_steps=None, buffer=None, action=None):
+        # Display First and Follow Sets
+        output = "First Sets:\n"
+        for nt, fset in self.firsts.items():
+            output += f"FIRST({nt}) = {fset}\n"
+
+        output += "------------------------------------------------\nFollow Sets:\n"
+        for nt, fset in self.follows.items():
+            output += f"FOLLOW({nt}) = {fset}\n"
+
+        output += "------------------------------------------------\nParsing Table:\n"
+        headers = ["NT/T"] + self.terminals
+        output += "\t".join(headers) + "\n"
+
+        for nt, row in zip(self.ntlist, self.parse_table):
+            output += f"{nt}\t" + "\t".join(row) + "\n"
+
+        # If parsing result is provided, display parsing steps
+        if parsing_steps is not None:
+            output += "------------------------------------------------\nParsing Steps:\n"
+            output += "\n".join(parsing_steps)
+
+            if buffer is not None:
+                output += "\n------------------------------------------------\n\nFinal Buffer:\n"
+                output += str(buffer)
+
+            if action is not None:
+                output += "\n\nAction Sequence:\n"
+                output += "\n".join(action)
+
+            if parsing_result:
+                output += "\n\nParsing Status: Successfully Parsed ✓"
+            else:
+                output += "\n\nParsing Status: Failed ✗"
+
+        self.output_text.delete(1.0, tk.END)
+        self.output_text.insert(tk.END, output)
+
+    def run_parser(self):
+        input_string = self.input_entry.get()
+        parsing_result, parsing_steps, buffer, action = self.stack_based_parsing(input_string)
+        self.display_output(parsing_result, parsing_steps, buffer, action)
+
+
+def main():
+    root = tk.Tk()
+    app = LLParserGUI(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
